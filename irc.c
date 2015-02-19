@@ -17,7 +17,14 @@
 #define  PORT       "6697"
 #define  SSL        1
 #define  NICK       "cbot"
-#define  USER       ""
+#define  NICKPASS   "holaa"
+#define  USER       "shareef12"
+#define  REALNAME   "shareef12"
+
+
+//TODO: Close gracefully on SIGSEG/SIGINT/SIGTERM
+//TODO: Check for memory leaks
+//TODO: Develop plugin architecture
 
 
 static ssize_t irc_send(Connection *conn, char *buf, size_t len, int flags)
@@ -80,7 +87,7 @@ static ssize_t irc_recv_all(Connection *conn, char **bufptr, size_t *n)
 }
 
 
-static void irc_recv_flush_to_fp(Connection *conn, FILE *stream)
+static ssize_t irc_recv_flush_to_fp(Connection *conn, FILE *stream)
 {
     char *buf = NULL;
     ssize_t len;
@@ -89,12 +96,24 @@ static void irc_recv_flush_to_fp(Connection *conn, FILE *stream)
     len = irc_recv_all(conn, &buf, &n);
     fprintf(stream, "%s", buf);
     free(buf);
+
+    return len;
 }
 
 
-Connection * irc_connect(char *hostname, char *port, int ssl, char *nick)
+static int irc_pong(Connection *conn, char *ping)
 {
-    int s;
+    ping[1] = 'O';
+    irc_send(conn, ping, strlen(ping), 0);
+
+    return 0;
+}
+
+
+Connection * irc_connect(char *hostname, char *port, int ssl, char *nick,
+                         char *nickpass, char *user, char *realname)
+{
+    int s, ping = 0;
     struct addrinfo hints, *result, *rp;
     Connection *conn= (Connection *) malloc(sizeof(Connection));
     char *buf = NULL;
@@ -162,32 +181,30 @@ Connection * irc_connect(char *hostname, char *port, int ssl, char *nick)
         printf("SSL Negotiation Successful\n");
     }
 
-    // Send NICK msg
-    sleep(2);
-    irc_recv_flush_to_fp(conn, stdout);
-    irc_nick(conn, nick);
+    // Recv initial message
+    if (irc_recv_flush_to_fp(conn, stdout) < 137)
+        irc_recv_flush_to_fp(conn, stdout);
     
-    // Respond to the server's PING
-    sleep(1);
+    // Send NICK msg
+    irc_nick(conn, nick);
     irc_recv_all(conn, &buf, &n);
-    printf("%s", buf);
-    buf[1] = 'O';
-    printf("%s", buf);
-    irc_send(conn, buf, strlen(buf), 0);
+    if (strncmp(buf, "PING :", 6) == 0)
+        irc_pong(conn, buf);
+    else
+        printf("%s", buf);
     free(buf);
 
     // Send USER msg
-    buf = "USER shareef12 0 * :shareef12\n";
-    irc_send(conn, buf, strlen(buf), 0);
+    irc_user(conn, user, "0", realname);
+    irc_recv_flush_to_fp(conn, stdout);
+    irc_recv_flush_to_fp(conn, stdout);
+    if (irc_recv_flush_to_fp(conn, stdout) < 300)
+        irc_recv_flush_to_fp(conn, stdout);
 
     // Send IDENTIFY msg
-    buf = "PRIVMSG NickServ :identify holaa\n";
-    irc_send(conn, buf, strlen(buf), 0);
-    
-    sleep(2);
-    irc_recv_flush_to_fp(conn, stdout);
-    sleep(2);
-    irc_recv_flush_to_fp(conn, stdout);
+    asprintf(&buf, "IDENTIFY %s", nickpass);
+    irc_msg(conn, "NickServ", buf);
+    free(buf);
 
     return conn;
 }
@@ -195,13 +212,37 @@ Connection * irc_connect(char *hostname, char *port, int ssl, char *nick)
 
 int irc_join(Connection *conn, char *channel)
 {
-    return 1;
+    char *msg;
+
+    asprintf(&msg, "JOIN %s\n", channel);
+    irc_send(conn, msg, strlen(msg), 0);
+
+    free(msg);
+    return 0;
 }
 
 
 int irc_part(Connection *conn, char *channel)
 {
+    char *msg;
+
+    asprintf(&msg, "PART %s\n", channel);
+    irc_send(conn, msg, strlen(msg), 0);
+
+    free(msg);
     return 1;
+}
+
+
+int irc_user(Connection *conn, char *user, char *mode, char *realname)
+{
+    char *msg;
+
+    asprintf(&msg, "USER %s %s * :%s\n", user, mode, realname);
+    irc_send(conn, msg, strlen(msg), 0);
+
+    free(msg);
+    return 0;
 }
 
 
@@ -219,7 +260,13 @@ int irc_nick(Connection *conn, char *nick)
 
 int irc_msg(Connection *conn, char *rcpt, char *msg)
 {
-    return 1;
+    char *buf;
+
+    asprintf(&buf, "PRIVMSG %s :%s\n", rcpt, msg);
+    irc_send(conn, buf, strlen(buf), 0);
+
+    free(buf);
+    return 0;
 }
 
 
@@ -231,7 +278,10 @@ int main(int argc, char *argv[])
     ssize_t len;
     int i;
 
-    conn = irc_connect(SERVER, PORT, SSL, NICK);
+    conn = irc_connect(SERVER, PORT, SSL, NICK, NICKPASS, USER, REALNAME);
+    irc_join(conn, "#test");
+    irc_msg(conn, "#test", "hello");
+    irc_recv_flush_to_fp(conn, stdout);
      
     return 0;
 }

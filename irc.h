@@ -6,7 +6,8 @@ typedef struct {
     SSL_CTX *sslContext;
 } Connection;
 
-Connection * irc_connect(char *hostname, char *port, int ssl, char *nick);
+Connection * irc_connect(char *hostname, char *port, int ssl, char *nick,
+                         char *nickpass, char *user, char *realname);
 
 int irc_join(Connection *conn, char *channel);
 
