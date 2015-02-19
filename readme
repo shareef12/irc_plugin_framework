@@ -1,0 +1,5 @@
+
+Compiling
+=========
+install libssl-dev
+gcc irc.c -lcrypto -lssl
