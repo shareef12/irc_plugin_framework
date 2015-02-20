@@ -14,33 +14,17 @@
 
 typedef int(*fptr)(char *,char *,char *);
 void *plugin;
-fptr handle_func;
+char *plugin_name;
+fptr  handle_func;
 
 void term_handler(int signum)
 {
     if (plugin != NULL) {
         dlclose(plugin);
+        free(plugin_name);
     }
     irc_disconnect();
     exit(0);
-}
-
-
-void plugin_open(char *filename)
-{
-    plugin = dlopen(filename, RTLD_LAZY);
-    if (plugin == NULL) {
-        fprintf(stderr, "dlopen: %s\n", dlerror());
-        return;
-    }
-
-    handle_func = dlsym(plugin, "handle_msg");
-    if (handle_func == NULL) {
-        fprintf(stderr, "dlsym: %s\n", dlerror());
-        return;
-    }
-
-    printf("Loaded module: %s\n", filename);
 }
 
 
@@ -52,30 +36,106 @@ int handle_msg(char *src, char *dst, char *msg)
 }
 
 
+int plugin_load(char *filename)
+{
+    void *p;
+    fptr f;
+
+    p = dlopen(filename, RTLD_LAZY);
+    if (p == NULL) {
+        fprintf(stderr, "dlopen: %s\n", dlerror());
+        return -1;
+    }
+
+    f = dlsym(p, "handle_msg");
+    if (f == NULL) {
+        fprintf(stderr, "dlsym: %s\n", dlerror());
+        dlclose(p);
+        return -1;
+    }
+
+    // Successfully loaded the plugin
+    if (plugin != NULL) {
+        dlclose(plugin);
+        free(plugin_name);
+    }
+    plugin = p;
+    plugin_name = strdup(filename);
+    handle_func = f;
+    return 0;
+}
+
+
+int plugin_unload()
+{
+    if (plugin == NULL) {
+        fprintf(stderr, "No plugin loaded\n");
+        return -1;
+    }
+
+    if (dlclose(plugin) != 0) {
+        fprintf(stderr, "dlclose %s\n", dlerror());
+        return -1;
+    }
+    free(plugin_name);
+
+    plugin = NULL;
+    plugin_name = NULL;
+    handle_func = handle_msg;
+
+    return 0;
+}
+
+
 void handle_plugin_msg(char *msg)
 {
     char *cmd = NULL;
     char *filename = NULL;
+    char *buf;
     int items;
 
-    items = sscanf(msg, ".plugin %ms %ms", &cmd, &filename);
+    items = sscanf(msg, "%ms %ms", &cmd, &filename);
 
-    if (items == 1 && strcmp(cmd, "unload") == 0) {
-        if (plugin != NULL) {
-            dlclose(plugin);
-            printf("Unloaded module\n");
-            plugin = NULL;
+    // UNLOAD
+    if (items == 1 && strcmp(cmd, ".unload") == 0) {
+        if (plugin_unload() < 0) {
+            printf("Plugin unload failed\n");
+            irc_msg("shareef12", "Plugin unload failed");
         }
         else {
-            irc_msg("shareef12", "No plugin is currently loaded");
+            printf("Plugin unloaded\n");
+            irc_msg("shareef12", "Plugin unloaded");
         }
         free(cmd);
-        handle_func = handle_msg;
     }
-    else if (items == 2 && strcmp(cmd, "load") == 0) {
-        plugin_open(filename);
+    // LOAD
+    else if (items == 2 && strcmp(cmd, ".load") == 0) {
+        if (plugin_load(filename) < 0) {
+            printf("Plugin load failed\n");
+            irc_msg("shareef12", "Plugin load failed");
+        }
+        else {
+            printf("Plugin %s loaded\n", filename);
+            asprintf(&buf, "Plugin %s loaded", filename);
+            irc_msg("shareef12", buf);
+            free(buf);
+        }
         free(cmd);
         free(filename);
+    }
+    // RELOAD
+    else if (items == 1 && strcmp(cmd, ".reload") == 0) {
+        if (plugin_load(plugin_name) < 0) {
+            printf("Plugin reload failed\n");
+            irc_msg("shareef12", "Plugin reload failed");
+        }
+        else {
+            printf("Plugin %s reloaded\n", plugin_name);
+            asprintf(&buf, "Plugin %s reloaded", plugin_name);
+            irc_msg("shareef12", buf);
+            free(buf);
+        }
+        free(cmd);
     }
     else {
         fprintf(stderr, "Malformed .plugin request: %s\n", msg);
@@ -124,7 +184,7 @@ void run_forever(char *pluginName)
         // Interpret the PRIVMSG
         if (strcmp(src, "shareef12") == 0 &&
             strcmp(dst, NICK) == 0 &&
-            strncmp(msg, ".plugin", 7) == 0)
+            msg[0] == '.')
         {
             handle_plugin_msg(msg);
         }
@@ -154,6 +214,7 @@ int main(int argc, char *argv[])
     irc_recv_flush_to_fp(stdout);
 
     plugin = NULL;
+    plugin_name = NULL;
     handle_func = handle_msg;
     run_forever(NULL);
 
