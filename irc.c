@@ -1,9 +1,11 @@
 #include "irc.h"
 
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdint.h>
+#include <unistd.h>
 #include <time.h>
 
 #include <sys/types.h>
@@ -13,25 +15,16 @@
 #include <openssl/rand.h>
 #include <openssl/err.h>
 
-#define  SERVER     "beitshlomo.com"
-#define  PORT       "6697"
-#define  SSL        1
-#define  NICK       "cbot"
-#define  NICKPASS   "holaa"
-#define  USER       "shareef12"
-#define  REALNAME   "shareef12"
-
-
 //TODO: Close gracefully on SIGSEG/SIGINT/SIGTERM
-//TODO: Check for memory leaks
 //TODO: Develop plugin architecture
 
+Connection *conn;
 
-static ssize_t irc_send(Connection *conn, char *buf, size_t len, int flags)
+ssize_t irc_send(char *buf, size_t len, int flags)
 {
     ssize_t bytesSent;
     if (conn->sslHandle == NULL) {
-        bytesSent = send(conn->sock, buf, len, flags);
+        bytesSent = send(conn->socket, buf, len, flags);
     }
     else {
         bytesSent = SSL_write(conn->sslHandle, buf, len);
@@ -41,11 +34,11 @@ static ssize_t irc_send(Connection *conn, char *buf, size_t len, int flags)
 }
 
 
-static ssize_t irc_recv(Connection *conn, void *buf, size_t len, int flags)
+ssize_t irc_recv(void *buf, size_t len, int flags)
 {
     ssize_t bytesRecv;
     if (conn->sslHandle == NULL) {
-        bytesRecv = recv(conn->sock, buf, len, flags);
+        bytesRecv = recv(conn->socket, buf, len, flags);
     }
     else {
         bytesRecv = SSL_read(conn->sslHandle, buf, len);
@@ -59,7 +52,7 @@ static ssize_t irc_recv(Connection *conn, void *buf, size_t len, int flags)
   irc_recv_all is similar to the getline function. Read the man page for 
   getline to understand this function's behavior.
 */
-static ssize_t irc_recv_all(Connection *conn, char **bufptr, size_t *n)
+ssize_t irc_recv_all(char **bufptr, size_t *n)
 {
     ssize_t bytes_read = 0;
     size_t received = 0;
@@ -75,7 +68,7 @@ static ssize_t irc_recv_all(Connection *conn, char **bufptr, size_t *n)
             *n += 1024;
         }
 
-        received = irc_recv(conn, *bufptr + bytes_read, 1024, 0);
+        received = irc_recv(*bufptr + bytes_read, 1024, 0);
         bytes_read += received;
 
         if (received < 1024)
@@ -87,13 +80,13 @@ static ssize_t irc_recv_all(Connection *conn, char **bufptr, size_t *n)
 }
 
 
-static ssize_t irc_recv_flush_to_fp(Connection *conn, FILE *stream)
+ssize_t irc_recv_flush_to_fp(FILE *stream)
 {
     char *buf = NULL;
     ssize_t len;
     size_t n;
 
-    len = irc_recv_all(conn, &buf, &n);
+    len = irc_recv_all(&buf, &n);
     fprintf(stream, "%s", buf);
     free(buf);
 
@@ -101,24 +94,15 @@ static ssize_t irc_recv_flush_to_fp(Connection *conn, FILE *stream)
 }
 
 
-static int irc_pong(Connection *conn, char *ping)
-{
-    ping[1] = 'O';
-    irc_send(conn, ping, strlen(ping), 0);
-
-    return 0;
-}
-
-
-Connection * irc_connect(char *hostname, char *port, int ssl, char *nick,
+int irc_connect(char *hostname, char *port, int ssl, char *nick,
                          char *nickpass, char *user, char *realname)
 {
-    int s, ping = 0;
+    int s;
     struct addrinfo hints, *result, *rp;
-    Connection *conn= (Connection *) malloc(sizeof(Connection));
     char *buf = NULL;
     size_t n;
  
+    conn = (Connection *) malloc(sizeof(Connection));
     memset(&hints, 0, sizeof(struct addrinfo));
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
@@ -131,14 +115,14 @@ Connection * irc_connect(char *hostname, char *port, int ssl, char *nick,
     }
 
     for (rp = result ; rp != NULL; rp = rp->ai_next) {
-        conn->sock = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
-        if (conn->sock == -1)
+        conn->socket = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+        if (conn->socket == -1)
             continue;
         
-        if (connect(conn->sock, rp->ai_addr, rp->ai_addrlen) == 0)
+        if (connect(conn->socket, rp->ai_addr, rp->ai_addrlen) == 0)
             break;
 
-        close(conn->sock);
+        close(conn->socket);
     }
 
     if (rp == NULL) {
@@ -147,7 +131,7 @@ Connection * irc_connect(char *hostname, char *port, int ssl, char *nick,
     }
 
     freeaddrinfo(result);
-    printf("Connected to %s:%s. Socket fd: %d\n", hostname, port, conn->sock);
+    printf("Connected to %s:%s. Socket fd: %d\n", hostname, port, conn->socket);
 
     conn->sslHandle = NULL;
     conn->sslContext = NULL;
@@ -168,7 +152,7 @@ Connection * irc_connect(char *hostname, char *port, int ssl, char *nick,
             exit(EXIT_FAILURE);
         }
         
-        if (SSL_set_fd(conn->sslHandle, conn->sock) == 0) {
+        if (SSL_set_fd(conn->sslHandle, conn->socket) == 0) {
             ERR_print_errors_fp(stderr);
             exit(EXIT_FAILURE);
         }
@@ -182,106 +166,111 @@ Connection * irc_connect(char *hostname, char *port, int ssl, char *nick,
     }
 
     // Recv initial message
-    if (irc_recv_flush_to_fp(conn, stdout) < 137)
-        irc_recv_flush_to_fp(conn, stdout);
+    if (irc_recv_flush_to_fp(stdout) < 137)
+        irc_recv_flush_to_fp(stdout);
     
     // Send NICK msg
-    irc_nick(conn, nick);
-    irc_recv_all(conn, &buf, &n);
+    irc_nick(nick);
+    irc_recv_all(&buf, &n);
     if (strncmp(buf, "PING :", 6) == 0)
-        irc_pong(conn, buf);
+        irc_pong(buf);
     else
         printf("%s", buf);
     free(buf);
 
     // Send USER msg
-    irc_user(conn, user, "0", realname);
-    irc_recv_flush_to_fp(conn, stdout);
-    irc_recv_flush_to_fp(conn, stdout);
-    if (irc_recv_flush_to_fp(conn, stdout) < 300)
-        irc_recv_flush_to_fp(conn, stdout);
+    irc_user(user, "0", realname);
+    irc_recv_flush_to_fp(stdout);
+    irc_recv_flush_to_fp(stdout);
+    if (irc_recv_flush_to_fp(stdout) < 300)
+        irc_recv_flush_to_fp(stdout);
 
     // Send IDENTIFY msg
     asprintf(&buf, "IDENTIFY %s", nickpass);
-    irc_msg(conn, "NickServ", buf);
+    irc_msg("NickServ", buf);
     free(buf);
 
-    return conn;
+    return 0;
 }
 
 
-int irc_join(Connection *conn, char *channel)
+void irc_disconnect()
+{
+    if (conn->sslHandle != NULL) {
+        SSL_shutdown(conn->sslHandle);
+        SSL_free(conn->sslHandle);
+        SSL_CTX_free(conn->sslContext);
+    }
+
+    close(conn->socket);
+    free(conn);
+}
+
+
+int irc_join(char *channel)
 {
     char *msg;
 
     asprintf(&msg, "JOIN %s\n", channel);
-    irc_send(conn, msg, strlen(msg), 0);
+    irc_send(msg, strlen(msg), 0);
 
     free(msg);
     return 0;
 }
 
 
-int irc_part(Connection *conn, char *channel)
+int irc_part(char *channel)
 {
     char *msg;
 
     asprintf(&msg, "PART %s\n", channel);
-    irc_send(conn, msg, strlen(msg), 0);
+    irc_send(msg, strlen(msg), 0);
 
     free(msg);
     return 1;
 }
 
 
-int irc_user(Connection *conn, char *user, char *mode, char *realname)
+int irc_user(char *user, char *mode, char *realname)
 {
     char *msg;
 
     asprintf(&msg, "USER %s %s * :%s\n", user, mode, realname);
-    irc_send(conn, msg, strlen(msg), 0);
+    irc_send(msg, strlen(msg), 0);
 
     free(msg);
     return 0;
 }
 
 
-int irc_nick(Connection *conn, char *nick)
+int irc_nick(char *nick)
 {
     char *msg;
 
     asprintf(&msg, "NICK %s\n", nick);
-    irc_send(conn, msg, strlen(msg), 0);
+    irc_send(msg, strlen(msg), 0);
 
     free(msg);
     return 0;
 }
 
 
-int irc_msg(Connection *conn, char *rcpt, char *msg)
+int irc_msg(char *rcpt, char *msg)
 {
     char *buf;
 
     asprintf(&buf, "PRIVMSG %s :%s\n", rcpt, msg);
-    irc_send(conn, buf, strlen(buf), 0);
+    irc_send(buf, strlen(buf), 0);
 
     free(buf);
     return 0;
 }
 
 
-int main(int argc, char *argv[])
+int irc_pong(char *ping)
 {
-    Connection *conn;
-    char *buf = NULL;
-    size_t n;
-    ssize_t len;
-    int i;
+    ping[1] = 'O';
+    irc_send(ping, strlen(ping), 0);
 
-    conn = irc_connect(SERVER, PORT, SSL, NICK, NICKPASS, USER, REALNAME);
-    irc_join(conn, "#test");
-    irc_msg(conn, "#test", "hello");
-    irc_recv_flush_to_fp(conn, stdout);
-     
     return 0;
 }
