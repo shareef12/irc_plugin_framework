@@ -12,8 +12,9 @@
 #define USER        "shareef12"
 #define REALNAME    "shareef12"
 
-typedef int(*fptr)(char *,char *);
+typedef int(*fptr)(char *,char *,char *);
 void *plugin;
+fptr handle_func;
 
 void term_handler(int signum)
 {
@@ -25,23 +26,63 @@ void term_handler(int signum)
 }
 
 
-fptr plugin_open(char *filename, char *func)
+void plugin_open(char *filename)
 {
-    fptr f;
-
     plugin = dlopen(filename, RTLD_LAZY);
     if (plugin == NULL) {
         fprintf(stderr, "dlopen: %s\n", dlerror());
-        return NULL;
+        return;
     }
 
-    f = dlsym(plugin, "handle_msg");
-    if (f == NULL) {
+    handle_func = dlsym(plugin, "handle_msg");
+    if (handle_func == NULL) {
         fprintf(stderr, "dlsym: %s\n", dlerror());
-        return NULL;
+        return;
     }
 
-    return f;
+    printf("Loaded module: %s\n", filename);
+}
+
+
+int handle_msg(char *src, char *dst, char *msg)
+{
+    printf("%s > %s : %s\n", src, dst, msg);
+
+    return 0;
+}
+
+
+void handle_plugin_msg(char *msg)
+{
+    char *cmd = NULL;
+    char *filename = NULL;
+    int items;
+
+    items = sscanf(msg, ".plugin %ms %ms", &cmd, &filename);
+
+    if (items == 1 && strcmp(cmd, "unload") == 0) {
+        if (plugin != NULL) {
+            dlclose(plugin);
+            printf("Unloaded module\n");
+            plugin = NULL;
+        }
+        else {
+            irc_msg("shareef12", "No plugin is currently loaded");
+        }
+        free(cmd);
+        handle_func = handle_msg;
+    }
+    else if (items == 2 && strcmp(cmd, "load") == 0) {
+        plugin_open(filename);
+        free(cmd);
+        free(filename);
+    }
+    else {
+        fprintf(stderr, "Malformed .plugin request: %s\n", msg);
+        irc_msg("shareef12", "Invalid .plugin request");
+        if (cmd != NULL) free(cmd);
+        if (filename != NULL) free(filename);
+    }
 }
 
 
@@ -51,14 +92,6 @@ void run_forever(char *pluginName)
     int items;
     size_t n;
 
-    fptr handle_msg;
-    if (pluginName != NULL) {
-        handle_msg = plugin_open("", "handle_msg");
-    }
-    else {
-        handle_msg = NULL;
-    }
-
     while (1) {
         buf = NULL;
         cmd = NULL;
@@ -67,7 +100,6 @@ void run_forever(char *pluginName)
         msg = NULL;
 
         irc_recv_all(&buf, &n);
-        cmd = strchr(buf, ' ') + 1;
 
         // Respond to PING first
         if (strncmp(buf, "PING :", 6) == 0) {
@@ -90,14 +122,14 @@ void run_forever(char *pluginName)
         }
 
         // Interpret the PRIVMSG
-        if (strcmp(src, "shareef12") == 0) {
-            printf("QWER %s > %s : %s\n", src, dst, msg);
-        }
-        else  if (handle_msg != NULL) {
-            handle_msg(src, msg);
+        if (strcmp(src, "shareef12") == 0 &&
+            strcmp(dst, NICK) == 0 &&
+            strncmp(msg, ".plugin", 7) == 0)
+        {
+            handle_plugin_msg(msg);
         }
         else {
-            printf("%s > %s : %s\n", src, dst, msg);
+            handle_func(src, dst, msg);
         }
 
         fflush(stdout);
@@ -120,7 +152,9 @@ int main(int argc, char *argv[])
     irc_join("#test");
     irc_msg("#test", "hello");
     irc_recv_flush_to_fp(stdout);
-    
+
+    plugin = NULL;
+    handle_func = handle_msg;
     run_forever(NULL);
 
     irc_disconnect(); 
