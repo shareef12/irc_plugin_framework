@@ -1,5 +1,5 @@
 CC=gcc
-CFLAGS=-c -Wall -ggdb
+CFLAGS=-c -Wall -D_GNU_SOURCE -ggdb
 LDFLAGS=-lcrypto -lssl -ldl
 COMMON_SOURCES=irc.c
 TARGET_SOURCES=bot.c
