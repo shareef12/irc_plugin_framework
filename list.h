@@ -1,10 +1,25 @@
 #ifndef _LINUX_LIST_H
 #define _LINUX_LIST_H
 
-#include <linux/types.h>
-#include <linux/stddef.h>
-#include <linux/poison.h>
-#include <linux/const.h>
+#include <stddef.h>
+
+//#define offsetof(TYPE, MEMBER) ((size_t) &((TYPE *)0)->MEMBER)
+
+#define container_of(ptr, type, member) ({                      \
+        const typeof( ((type *)0)->member ) *__mptr = (ptr);    \
+        (type *)( (char *)__mptr - offsetof(type,member) );})
+
+/*
+ * These are non-NULL pointers that will result in page faults
+ * under normal circumstances, used to verify that nobody uses
+ * non-initialized list entries.
+ */
+#define LIST_POISON1  ((void *) 0x00100100)
+#define LIST_POISON2  ((void *) 0x00200200)
+
+struct list_head {
+	struct list_head *next, *prev;
+};
 
 /*
  * Simple doubly linked list implementation.
@@ -590,6 +605,13 @@ static inline void list_splice_tail_init(struct list_head *list,
  * too wasteful.
  * You lose the ability to access the tail in O(1).
  */
+struct hlist_head {
+	struct hlist_node *first;
+};
+
+struct hlist_node {
+	struct hlist_node *next, **pprev;
+};
 
 #define HLIST_HEAD_INIT { .first = NULL }
 #define HLIST_HEAD(name) struct hlist_head name = {  .first = NULL }
