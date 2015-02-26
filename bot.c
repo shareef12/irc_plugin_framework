@@ -1,5 +1,5 @@
 #include "bot.h"
-#include "irc.h"
+#include "api/irc.h"
 
 #include <unistd.h>
 #include <signal.h>

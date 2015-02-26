@@ -1,25 +1,29 @@
 CC=gcc
 CFLAGS=-c -Wall -D_GNU_SOURCE -ggdb
-#COMMON_SOURCES=irc.c
-#TARGET_SOURCES=bot.c
-#COMMON_OBJECTS=$(COMMON_SOURCES:.c=.o)
-#TARGET_OBJECTS=$(TARGET_SOURCES:.c=.o)
-#EXECUTABLE=multiBot
+LDFLAGS=-lirc -ldl
+TARGET_SOURCES=bot.c
+TARGET_OBJECTS=$(TARGET_SOURCES:.c=.o)
+EXECUTABLE=cbot
+API_DIR=api
+PLUGIN_DIR=plugins
 
-all: libirc.so cbot
+.PHONY: all api plugins target
 
-libirc.so: irc.o
-	$(CC) $< -o $@ -lcrypto -lssl -shared
-	sudo cp $@ /usr/lib/
+all: api plugins target
 
-irc.o: irc.c
-	$(CC) $(CFLAGS) $< -o $@ -fpic
+api:
+	$(MAKE) -C $(API_DIR)
+plugins:
+	$(MAKE) -C $(PLUGIN_DIR)
+target: $(EXECUTABLE)
 
-cbot: bot.o
-	$(CC) $< -o $@ -lirc -ldl
+$(EXECUTABLE): $(TARGET_OBJECTS)
+	$(CC) $^ -o $@ $(LDFLAGS)
 
-bot.o: bot.c
+%.o: %.c
 	$(CC) $(CFLAGS) $< -o $@
 
 clean:
 	$(RM) *.o
+	$(MAKE) -C $(API_DIR) clean
+	$(MAKE) -C $(PLUGIN_DIR) clean
