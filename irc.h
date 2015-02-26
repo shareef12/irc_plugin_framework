@@ -1,3 +1,4 @@
+#include <stdarg.h>
 #include <openssl/ssl.h>
 
 typedef struct {
@@ -27,6 +28,6 @@ int irc_nick(char *nick);
 
 int irc_user(char *user, char *mode, char *realname);
 
-int irc_msg(char *rcpt, char *msg);
+int irc_msg(char *rcpt, char *fmt, ...);
 
 int irc_pong(char *ping);

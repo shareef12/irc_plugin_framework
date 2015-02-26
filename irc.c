@@ -254,14 +254,19 @@ int irc_nick(char *nick)
 }
 
 
-int irc_msg(char *rcpt, char *msg)
+int irc_msg(char *rcpt, char *fmt, ...)
 {
-    char *buf;
+    char *buf, *msg;
+    va_list ap;
+    
+    va_start(ap, fmt);
+    asprintf(&buf, "PRIVMSG %s :%s\n", rcpt, fmt);
+    vasprintf(&msg, buf, ap);
 
-    asprintf(&buf, "PRIVMSG %s :%s\n", rcpt, msg);
-    irc_send(buf, strlen(buf), 0);
+    irc_send(msg, strlen(msg), 0);
 
     free(buf);
+    free(msg);
     return 0;
 }
 
