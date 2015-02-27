@@ -1,3 +1,6 @@
+#ifndef _irc_h
+#define _irc_h
+
 #include <stdarg.h>
 #include <openssl/ssl.h>
 
@@ -20,6 +23,8 @@ ssize_t irc_recv_all(char **bufptr, size_t *n);
 
 ssize_t irc_recv_flush_to_fp(FILE *stream);
 
+int irc_quit(char *reason);
+
 int irc_join(char *channel);
 
 int irc_part(char *channel);
@@ -31,3 +36,5 @@ int irc_user(char *user, char *mode, char *realname);
 int irc_msg(char *rcpt, char *fmt, ...);
 
 int irc_pong(char *ping);
+
+#endif

@@ -14,9 +14,6 @@
 #include <openssl/rand.h>
 #include <openssl/err.h>
 
-//TODO: Close gracefully on SIGSEG/SIGINT/SIGTERM
-//TODO: Develop plugin architecture
-
 Connection *conn;
 
 ssize_t irc_send(char *buf, size_t len, int flags)
@@ -193,8 +190,9 @@ int irc_connect(char *hostname, char *port, int ssl, char *nick,
 }
 
 
-void irc_disconnect()
+void irc_disconnect(char *reason)
 {
+    irc_quit(reason);
     if (conn->sslHandle != NULL) {
         SSL_shutdown(conn->sslHandle);
         SSL_free(conn->sslHandle);
@@ -203,6 +201,18 @@ void irc_disconnect()
 
     close(conn->socket);
     free(conn);
+}
+
+
+int irc_quit(char *reason)
+{
+    char *msg;
+
+    asprintf(&msg, "QUIT :%s\n", reason);
+    irc_send(msg, strlen(msg), 0);
+
+    free(msg);
+    return 0;
 }
 
 
