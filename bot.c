@@ -20,7 +20,7 @@ void term_handler(int signum)
         free(p->name);
         free(p);
     }
-    irc_disconnect();
+    irc_disconnect("Terminated by maintainer");
     exit(0);
 }
 
@@ -111,10 +111,18 @@ int plugin_load(char *name)
         return -1;
     }
 
+    // Initialize the plugin
+    if (p->init_func() == -1) {
+        fprintf(stderr, "%s initialization failed\n", name);
+        irc_msg(MAINTAINER, "%s initialization failed", name);
+        dlclose(p->handle);
+        free(p);
+        return -1;
+    }
+
     // Add the plugin to the master list
     p->name = strdup(name);
     list_add_tail((struct list_head *)p, (struct list_head *)plugins);
-    p->init_func();
 
     printf("Loaded plugin %s\n", p->name);
     irc_msg(MAINTAINER, "Loaded plugin %s", p->name);
@@ -300,7 +308,7 @@ int main(int argc, char *argv[])
 
     // Begin the main run loop
     run_forever();
-    irc_disconnect(); 
+    irc_disconnect("Finished execution"); 
 
     return 0;
 }
