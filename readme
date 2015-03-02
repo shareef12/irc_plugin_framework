@@ -1,5 +1,29 @@
+Plugins
+=======
+This framework supports irc plugins. Every PRIVMSG that is received will be sent to all plugins for action. Every plugin is expected to implement three functions:
+
+int init(void) -> Conduct any plugin-specific actions on load
+int handle(char *src, char *dst, char *msg) -> Actions to take on receipt of a PRIVMSG
+int fini(void) -> Conduct any plugin-specific actions on unload
+
+A basic irc API is provided. Plugins should include api/irc.h to access these functions.
+
+Dependencies
+============
+libssl-dev
 
 Compiling
 =========
-install libssl-dev
-gcc bot.c irc.c -lcrypto -lssl -ldl
+Add the plugin source file to PLUGIN_SOURCES in plugins/makefile
+Run make from the plugins directory
+Have the maintainer contact the bot over irc to load the plugin
+
+Maintainer commandes
+====================
+From IRC, the maintainer can control the plugins the bot loads and unloads. Plugins can be controlled through pm's with the bot. Commands are below:
+
+!list -> Show loaded plugins
+!load <plugin> -> Load a specific plugin
+!unload <plugin> -> Unload a specific plugin
+!reload <plugin> -> Reload a specific plugin
+!reload all -> Reload all currently loaded plugins
