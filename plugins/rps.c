@@ -170,10 +170,10 @@ int init()
 
 int fini()
 {
-    struct list_head *pos;
+    struct list_head *pos, *n;
 
     save_history();
-    list_for_each_safe(pos, users) {
+    list_for_each_safe(pos, n, users) {
         destroy_user((user_t *)pos);
     }    
     free(users);

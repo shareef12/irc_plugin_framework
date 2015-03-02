@@ -272,6 +272,7 @@ int irc_msg(char *rcpt, char *fmt, ...)
     va_start(ap, fmt);
     asprintf(&buf, "PRIVMSG %s :%s\n", rcpt, fmt);
     vasprintf(&msg, buf, ap);
+    va_end(ap);
 
     irc_send(msg, strlen(msg), 0);
 

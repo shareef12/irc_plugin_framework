@@ -1,5 +1,5 @@
-#ifndef _bot_h
-#define _bot_h
+#ifndef _config_h
+#define _config_h
 
 #define SERVER      "server.net"
 #define PORT        "6697"
