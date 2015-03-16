@@ -1,314 +1,391 @@
 #include "bot.h"
-#include "api/irc.h"
 
+#include <stdio.h>
+#include <string.h>
 #include <unistd.h>
-#include <signal.h>
+
+#include <sys/socket.h>
+#include <sys/socket.h>
+#include <netdb.h>
+#include <openssl/rand.h>
+#include <openssl/err.h>
+
 #include <dlfcn.h>
 
-plugin_t *plugins;
+/**
+ * TODO: Implement channel info tracking/joining/parting
+ */
 
 
-void term_handler(int signum)
+static ssize_t bot_send(bot_t *bot, char *buf, size_t len, int flags)
 {
-    struct list_head *pos, *n;
-    plugin_t *p;
-
-    list_for_each_safe(pos, n, (struct list_head *)plugins) {
-        list_del(pos);
-        p = (plugin_t *)pos;
-        dlclose(p->handle);
-        free(p->name);
-        free(p);
+    ssize_t bytesSent;
+    if (bot->sslHandle == NULL) {
+        bytesSent = send(bot->socket, buf, len, flags);
     }
-    irc_disconnect("Terminated by maintainer");
-    exit(0);
+    else {
+        bytesSent = SSL_write(bot->sslHandle, buf, len);
+    }
+
+    return bytesSent;
 }
 
 
-int default_msg_handler(char *src, char *dst, char *msg)
+static ssize_t bot_recv(bot_t *bot, void *buf, size_t len, int flags)
 {
-    printf("%s > %s : %s\n", src, dst, msg);
+    ssize_t bytesRecv;
+    if (bot->sslHandle == NULL) {
+        bytesRecv = recv(bot->socket, buf, len, flags);
+    }
+    else {
+        bytesRecv = SSL_read(bot->sslHandle, buf, len);
+    }
+
+    return bytesRecv;
+}
+
+
+static char * bot_recv_all(bot_t *bot)
+{
+    char *buf = malloc(1500);
+    ssize_t buf_size = 0;
+    ssize_t len = 0, n = 0;
+    struct timeval timeout = {1, 0};
+    
+    setsockopt(bot->socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+
+    while (1) {
+        if (buf_size - len < 1500) {
+            buf = realloc(buf, buf_size + 1500);
+            buf_size += 1500;
+        }
+
+        n = bot_recv(bot, buf + len, 1500, 0);
+        if (n < 0) {
+            break;
+        }
+        len += n;
+    }
+
+    timeout.tv_sec = 0;
+    timeout.tv_usec = 0;
+    setsockopt(bot->socket, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+
+    if (len == 0) {
+        free(buf);
+        return NULL;
+    }
+    
+    buf[len] = 0;
+    return buf;
+}
+
+
+static ssize_t bot_recv_flush_to_fp(bot_t *bot, FILE *stream)
+{
+    char *buf;
+    size_t len = 0;
+
+    buf = bot_recv_all(bot);
+    if (buf != NULL) {
+        len = strlen(buf);
+        fprintf(stream, "%s", buf);
+        free(buf);
+    }
+
+    return len;
+}
+
+
+static int bot_connect(bot_t *bot, char *server, char *port, uint8_t ssl,
+                       char *user, char *realname, char *nick, char *pass)
+{
+    int s;
+    struct addrinfo hints, *result, *rp;
+    char *buf = NULL;
+
+    memset(&hints, 0, sizeof(struct addrinfo));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_protocol = IPPROTO_TCP;
+
+    s = getaddrinfo(server, port, &hints, &result);
+    if (s != 0) {
+        fprintf(stderr, "getaddrinfo: %s\n", gai_strerror(s));
+        return -1;
+    }
+
+    for (rp = result ; rp != NULL; rp = rp->ai_next) {
+        bot->socket = socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+        if (bot->socket == -1)
+            continue;
+
+        if (connect(bot->socket, rp->ai_addr, rp->ai_addrlen) == 0)
+            break;
+
+        close(bot->socket);
+    }
+
+    if (rp == NULL) {
+        fprintf(stderr, "Could not bot->ct to %s:%s\n", server, port);
+        return -1;
+    }
+
+    freeaddrinfo(result);
+    printf("Connected to %s:%s. Socket fd: %d\n", server, port, bot->socket);
+
+    bot->sslHandle = NULL;
+    bot->sslContext = NULL;
+    if (ssl) {
+        printf("Beginning SSL Negotiation...\n");
+        SSL_load_error_strings();
+        SSL_library_init();
+
+        bot->sslContext = SSL_CTX_new(SSLv23_client_method());
+        if (bot->sslContext == NULL) {
+            ERR_print_errors_fp(stderr);
+            return -1;
+        }
+
+        bot->sslHandle = SSL_new(bot->sslContext);
+        if (bot->sslHandle == NULL) {
+            ERR_print_errors_fp(stderr);
+            return -1;
+        }
+        if (SSL_set_fd(bot->sslHandle, bot->socket) == 0) {
+            ERR_print_errors_fp(stderr);
+            return -1;
+        }
+
+        if (SSL_connect(bot->sslHandle) != 1) {
+            ERR_print_errors_fp(stderr);
+            return -1;
+        }
+
+        printf("SSL Negotiation Successful\n");
+    }
+
+    // Recv initial message
+    bot_recv_flush_to_fp(bot, stdout);
+
+    // Send USER and NICK msg together to avoid awkward PING requests
+    asprintf(&buf, "USER %s 0 * :%s\nNICK %s\n", user, realname, nick);
+    bot_send(bot, buf, strlen(buf), 0);
+    free(buf);
+
+    buf = bot_recv_all(bot);
+    if (strncmp(buf, "PING :", 6) == 0) {
+        buf[1] = 'O';
+        bot_send(bot, buf, strlen(buf), 0);
+    }
+    else {
+        printf("%s", buf);
+    }
+    free(buf);
+
+    bot_recv_flush_to_fp(bot, stdout);
+
+    // Send IDENTIFY msg
+    asprintf(&buf, "PRIVMSG NickServ :IDENTIFY %s\n", pass);
+    bot_send(bot, buf, strlen(buf), 0);
+    free(buf);
+
+    bot_send(bot, "JOIN #test\n", 11, 0);
+    bot_recv_flush_to_fp(bot, stdout);
 
     return 0;
 }
 
 
-static plugin_t * get_plugin_by_name(char *name)
+static void bot_disconnect(bot_t *bot, char *reason)
 {
-    struct list_head *pos;
-    plugin_t *p;
+    char *buf;
 
-    list_for_each(pos, (struct list_head *)plugins) {
-        p = (plugin_t *)pos;
-        if (strcmp(p->name, name) == 0) {
-            return p;
-        }
+    asprintf(&buf, "QUIT :%s\n", reason);    
+    bot_send(bot, buf, strlen(buf), 0);
+    free(buf);
+
+    if (bot->sslHandle != NULL) {
+        SSL_shutdown(bot->sslHandle);
+        SSL_free(bot->sslHandle);
+        SSL_CTX_free(bot->sslContext);
+    }
+
+    close(bot->socket);
+}
+
+
+static plugin_t * plugin_get_by_name(struct list_head *plugins, char *name)
+{
+    plugin_t *plugin;
+    
+    list_for_each_entry(plugin, plugins, list) {
+        if (strcmp(plugin->name, name) == 0)
+            return plugin;
     }
 
     return NULL;
 }
 
 
-static int plugin_load_find_funcs(plugin_t *p)
+static plugin_t * plugin_get_by_path(struct list_head *plugins, char *path)
 {
-    char *err = NULL;
-    
-    p->init_func = dlsym(p->handle, "init");
-    if (p->init_func == NULL) {
-        err = dlerror();
-        fprintf(stderr, "%s\n", err);
-        irc_msg(MAINTAINER, "%s", err);
-        return -1;
-    }
-    
-    p->handle_func = dlsym(p->handle, "handle");
-    if (p->handle_func == NULL) {
-        err = dlerror();
-        fprintf(stderr, "%s\n", err);
-        irc_msg(MAINTAINER, "%s", err);
-        return -1;
+    plugin_t *plugin;
+
+    list_for_each_entry(plugin, plugins, list) {
+        if (strcmp(plugin->path, path) == 0)
+            return plugin;
     }
 
-    p->fini_func = dlsym(p->handle, "fini");
-    if (p->fini_func == NULL) {
-        err = dlerror();
-        fprintf(stderr, "%s\n", err);
-        irc_msg(MAINTAINER, "%s", err);
-        return -1;
-    }
-
-    return 0;
+    return NULL;
 }
 
 
-int plugin_load(char *name)
+static int plugin_load(plugin_t *plugin, char *path)
 {
-    plugin_t *p = (plugin_t *) malloc(sizeof(plugin_t));
-    char *err;
-
-    // Do not open the same plugin twice
-    if (get_plugin_by_name(name)) {
-        fprintf(stderr, "Plugin %s is already loaded\n", name);
-        irc_msg(MAINTAINER, "Plugin %s is already loaded", name);
-        free(p);
-        return -1;
-    }
-
     // Open the .so
-    p->handle = dlopen(name, RTLD_LAZY);
-    if (p->handle == NULL) {
-        err = dlerror();
-        fprintf(stderr, "%s\n", err);
-        irc_msg(MAINTAINER, "%s", err);
-        free(p);
+    plugin->handle = dlopen(path, RTLD_LAZY);
+    if (plugin->handle == NULL) {
         return -1;
     }
 
     // Get the functions that should have been implemented
-    if (plugin_load_find_funcs(p) < 0) {
-        dlclose(p->handle);
-        free(p);
+    plugin->init_func = dlsym(plugin->handle, "init");
+    if (plugin->init_func == NULL) {
+        dlclose(plugin->handle);
+        return -1;
+    }
+    
+    plugin->handle_func = dlsym(plugin->handle, "handle");
+    if (plugin->handle_func == NULL) {
+        dlclose(plugin->handle);
+        return -1;
+    }
+
+    plugin->fini_func = dlsym(plugin->handle, "fini");
+    if (plugin->fini_func == NULL) {
+        dlclose(plugin->handle);
         return -1;
     }
 
     // Initialize the plugin
-    if (p->init_func() == -1) {
-        fprintf(stderr, "%s initialization failed\n", name);
-        irc_msg(MAINTAINER, "%s initialization failed", name);
-        dlclose(p->handle);
-        free(p);
+    if (plugin->init_func() < 0) {
+        dlclose(plugin->handle);
         return -1;
     }
 
-    // Add the plugin to the master list
-    p->name = strdup(name);
-    list_add_tail((struct list_head *)p, (struct list_head *)plugins);
-
-    printf("Loaded plugin %s\n", p->name);
-    irc_msg(MAINTAINER, "Loaded plugin %s", p->name);
     return 0;
 }
 
 
-int plugin_unload(char *name)
+static int plugin_unload(plugin_t *plugin)
 {
-    plugin_t *p;
-    char *err;
+    plugin->fini_func();
+    
+    dlclose(plugin->handle);
+    free(plugin->name);
+    free(plugin->path);
+    
+    list_del(&plugin->list);
+    free(plugin);
 
-    p = get_plugin_by_name(name);
-    if (p == NULL) {
-        fprintf(stderr, "Plugin %s was not loaded\n", name);
-        irc_msg(MAINTAINER, "Plugin %s was not loaded", name);
-        return -1;
-    }
-
-    p->fini_func();
-    if (dlclose(p->handle) != 0) {
-        err = dlerror();
-        fprintf(stderr, "%s\n", err);
-        irc_msg(MAINTAINER, "%s", err);
-    }
-
-    free(p->name);
-    list_del((struct list_head *)p);
-    free(p);
-
-    printf("Unloaded plugin %s\n", name);
-    irc_msg(MAINTAINER, "Unloaded plugin %s", name);
     return 0;
 }
 
 
-void handle_admin_msg(char *msg)
+
+bot_t * bot_create(char *name, char *server, char *port, uint8_t ssl,
+                   char *user, char *nick, char *pass, char *maintainer)
 {
-    char *cmd = NULL;
-    char *name = NULL;
-    int items;
-    struct list_head *pos, *n;
+    bot_t *bot;
 
-    items = sscanf(msg, "%ms %ms", &cmd, &name);
+    bot = malloc(sizeof(bot_t));
+    if (bot_connect(bot, server, port, ssl, user, name, nick, pass) < 0) {
+        free(bot);
+        return NULL;
+    }
 
-    // LOAD
-    if (items == 2 && strcmp(cmd, "!load") == 0) {
-        plugin_load(name);
-        free(cmd);
-        free(name);
+    bot->name   = strdup(name);
+    bot->server = strdup(server);
+    bot->port   = strdup(port);
+    bot->ssl    = ssl;
+    bot->user   = strdup(user);
+    bot->nick   = strdup(nick);
+    bot->pass   = strdup(pass);
+    bot->maintainer = strdup(maintainer);
+
+    INIT_LIST_HEAD(&bot->channels);
+    INIT_LIST_HEAD(&bot->plugins);
+
+    return bot;
+}
+
+
+void bot_destroy(bot_t *bot, char *reason)
+{
+    plugin_t *plugin, *p;
+    channel_t *channel, *c;
+    
+    bot_disconnect(bot, reason);
+
+    free(bot->name);
+    free(bot->server);
+    free(bot->port);
+    free(bot->user);
+    free(bot->nick);
+    free(bot->pass);
+    free(bot->maintainer);
+
+    list_for_each_entry_safe(plugin, p, &bot->plugins, list) {
+        plugin_unload(plugin);
     }
-    // UNLOAD
-    else if (items == 2 && strcmp(cmd, "!unload") == 0) {
-        plugin_unload(name);
-        free(cmd);
-        free(name);
-    }
-    // RELOAD
-    else if (items == 2 && strcmp(cmd, "!reload") == 0) {
-        if (strcmp(name, "all") == 0) {
-            list_for_each_prev_safe(pos, n, (struct list_head *)plugins) {
-                free(name);
-                name = strdup(((plugin_t *)pos)->name);
-                plugin_unload(name);
-                plugin_load(name);
-            }
-        }
-        else {
-            plugin_unload(name);
-            plugin_load(name);
-        }
-        free(cmd);
-        free(name);
-    }
-    // LIST
-    else if (items == 1 && strcmp(cmd, "!list") == 0) {
-        list_for_each(pos, (struct list_head *)plugins) {
-            irc_msg(MAINTAINER, ((plugin_t *)pos)->name);
-        }
-        irc_msg(MAINTAINER, "End of list");
-        free(cmd);
-    }
-    // UNKNOWN
-    else {
-        fprintf(stderr, "Invalid plugin request: %s\n", msg);
-        irc_msg(MAINTAINER, "!(load | unload | reload | list) <module | \"all\">");
-        if (cmd != NULL) free(cmd);
-        if (name != NULL) free(name);
+
+    list_for_each_entry_safe(channel, c, &bot->channels, list) {
+        // TODO: Free all channels
     }
 }
 
 
-void run_forever()
+int bot_add_plugin(bot_t *bot, char *path)
 {
-    char *buf, *cmd, *src, *dst, *msg;
-    int items;
-    size_t n;
-    struct list_head *pos;
+    plugin_t *plugin;
+    char *fname;
 
-    while (1) {
-        buf = NULL;
-        cmd = NULL;
-        src = NULL;
-        dst = NULL;
-        msg = NULL;
+    // Don't load the plugin if it's already loaded
+    if (plugin_get_by_path(&bot->plugins, path) != NULL)
+        return -1;  // Plugin already loaded
 
-        irc_recv_all(&buf, &n);
-
-        // Respond to PING first
-        if (strncmp(buf, "PING :", 6) == 0) {
-            irc_pong(buf);
-            free(buf);
-            continue;
-        }
-
-        // Parse out important PRIVMSG fields
-        items = sscanf(buf, ":%m[^!]!%*s %ms %ms :%m[^\n]\n", &src, &cmd, &dst, &msg);
-
-        if (items < 4 || items == EOF || strcmp(cmd, "PRIVMSG") != 0) {
-            printf("%s", buf);
-            if (cmd != NULL) free(cmd);
-            if (src != NULL) free(src);
-            if (dst != NULL) free(dst);
-            if (msg != NULL) free(msg);
-            free(buf);
-            continue;
-        }
-
-        // Interpret the PRIVMSG
-        if (strcmp(src, MAINTAINER) == 0 &&
-            strcmp(dst, NICK) == 0 &&
-            msg[0] == '!')
-        {
-            handle_admin_msg(msg);
-        }
-        else if (list_empty((struct list_head *)plugins)) {
-            plugins->handle_func(src,dst,msg);
-        }
-        else {
-            list_for_each(pos, (struct list_head *)plugins) {
-                ((plugin_t *)pos)->handle_func(src, dst, msg);
-            }
-        }
-
-        fflush(stdout);
-        free(cmd);
-        free(src);
-        free(dst);
-        free(msg);
-        free(buf);
-    }
-}
-
-
-int main(int argc, char *argv[])
-{
-    plugin_t def;
-
-    // Initial globals and register sighandlers
-    def.name = "default";
-    def.init_func = NULL;
-    def.fini_func = NULL;
-    def.handle_func = default_msg_handler;
-    INIT_LIST_HEAD((struct list_head *)&def);
-    plugins = &def;
-
-    signal(SIGINT, term_handler);
-    signal(SIGTERM, term_handler);
-
-    // Initial connection actions
-    irc_connect(SERVER, PORT, SSL_CONN, NICK, NICKPASS, USER, REALNAME);
-    irc_join(CHANNELS);
-    irc_msg("#test", "hello");
-    irc_recv_flush_to_fp(stdout);
-
-    if (argc > 2) {
-        fprintf(stderr, "Usage: %s <plugin>\n", argv[0]);
-        exit(1);
-    }
-    else if (argc == 2) {
-       plugin_load(argv[1]);
+    plugin = malloc(sizeof(plugin_t));
+    
+    if (plugin_load(plugin, path) < 0) {
+        free(plugin);
+        return -1;  // Could not load the plugin
     }
 
-    // Begin the main run loop
-    run_forever();
-    irc_disconnect("Finished execution"); 
+    plugin->path = strdup(path);
+    fname = strrchr(path, '/');
+    if (fname == NULL)
+        plugin->name = path;
+    else
+        plugin->name = fname + 1;
 
+    list_add_tail(&plugin->list, &bot->plugins);
     return 0;
 }
+
+    
+int bot_remove_plugin(bot_t *bot, char *identifier)
+{
+    plugin_t *plugin;
+
+    // Try to find the plugin by path first, because that will be more specific
+    plugin = plugin_get_by_path(&bot->plugins, identifier);
+    if (plugin == NULL)
+        plugin = plugin_get_by_name(&bot->plugins, identifier);
+    if (plugin == NULL)
+        return -1;  // Could not find plugin
+
+    plugin_unload(plugin);
+    return 0;
+}   
+

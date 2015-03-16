@@ -19,6 +19,9 @@ int rules[3][3] = {{SRV_TIE,  SRV_LOSS, SRV_WIN},
 typedef struct user_t {
     struct list_head list;
     char *name;
+    uint32_t wins;
+    uint32_t losses;
+    uint32_t ties;
     struct list_head *history;
 } user_t;
 

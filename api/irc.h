@@ -1,40 +1,24 @@
 #ifndef _irc_h
 #define _irc_h
 
+#include "../bot.h"
 #include <stdarg.h>
-#include <openssl/ssl.h>
+#include <stdint.h>
 
-typedef struct {
-    int socket;
-    SSL *sslHandle;
-    SSL_CTX *sslContext;
-} Connection;
+ssize_t irc_send(bot_t *bot, char *buf, size_t len, int flags);
 
-int irc_connect(char *hostname, char *port, int ssl, char *nick,
-                char *nickpass, char *user, char *realname);
+ssize_t irc_recv(bot_t *bot, void *buf, size_t len, int flags);
 
-void irc_disconnect();
+ssize_t irc_recv_all(bot_t *bot, char **bufptr, size_t *n);
 
-ssize_t irc_send(char *buf, size_t len, int flags);
+ssize_t irc_recv_flush_to_fp(bot_t *bot, FILE *stream);
 
-ssize_t irc_recv(void *buf, size_t len, int flags);
+int irc_join(bot_t *bot, char *channel);
 
-ssize_t irc_recv_all(char **bufptr, size_t *n);
+int irc_part(bot_t *bot, char *channel);
 
-ssize_t irc_recv_flush_to_fp(FILE *stream);
+int irc_nick(bot_t *bot, char *nick);
 
-int irc_quit(char *reason);
-
-int irc_join(char *channel);
-
-int irc_part(char *channel);
-
-int irc_nick(char *nick);
-
-int irc_user(char *user, char *mode, char *realname);
-
-int irc_msg(char *rcpt, char *fmt, ...);
-
-int irc_pong(char *ping);
+int irc_msg(bot_t *bot, char *rcpt, char *fmt, ...);
 
 #endif

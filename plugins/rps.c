@@ -5,6 +5,7 @@
 #include <stdlib.h>
 #include <errno.h>
 #include <glob.h>
+#include <sys/time.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 
@@ -146,7 +147,34 @@ static int load_history()
 
 static int rps_srv_move(char *src)
 {
+    //user_t *opp;
+    struct timeval tv;
+
+    //opp = get_user_by_name(src);
+    if (1 == 1) {
+    //if (opp == NULL) {
+        gettimeofday(&tv, NULL);
+        srandom(tv.tv_sec ^ tv.tv_usec);
+        return random() % 3;
+    }
+    
     return -1;
+}
+
+
+static int send_all_stats(char *dst)
+{
+    struct list_head *pos;
+    user_t *user;
+
+    list_for_each(pos, users) {
+        user = (user_t *)pos;
+        irc_msg(dst, "%s: W:%lu L:%lu T:%lu %%:%lu\n", user->name,
+                    user->wins, user->losses, user->ties,
+                    user->wins * 100 / (user->wins + user->losses));
+    }
+
+    return 0;
 }
 
 
@@ -183,45 +211,58 @@ int fini()
 
 int handle(char *src, char *dst, char *msg)
 {
-    char *buf;
     int user_move;
+    int serv_move;
+    user_t *opp;
 
     printf("plugin: %s > %s : %s\n", src, dst, msg);
     if (strcmp(dst, "cbot") == 0) {
         dst = src;
-    }
 
-    if (strcmp(msg, ".stats") == 0) {
-        // Send stats
-        ;
-    }
-    else if (msg[0] == '.') {
-        switch (msg[1]) {
-        case 'r':
-            user_move = MV_ROCK;
-            break;
-        case 'p':
-            user_move = MV_PAPER;
-            break;
-        case 's':
-            user_move = MV_SCISSOR;
-            break;
-        default:
+        if (strncmp(msg, ".stats", 6) == 0) {
+            send_all_stats(dst);
             return 0;
         }
+        else if (msg[0] == '.') {
+            switch (msg[1]) {
+            case 'r':
+                user_move = MV_ROCK;
+                break;
+            case 'p':
+                user_move = MV_PAPER;
+                break;
+            case 's':
+                user_move = MV_SCISSOR;
+                break;
+            default:
+                return 0;
+            }
+            
+            serv_move = rps_srv_move(src);
+            add_move_for_user(src, user_move, serv_move);
+            opp = get_user_by_name(src);
 
-        switch (rules[rps_srv_move(src)][user_move]) {
-        case SRV_WIN:
-            break;
-        case SRV_TIE:
-            break;
-        case SRV_LOSS:
-            break;
+            switch (rules[serv_move][user_move]) {
+            case SRV_WIN:
+                irc_msg(dst, "You lose!");
+                opp->losses += 1;
+                break;
+            case SRV_TIE:
+                irc_msg(dst, "Tied...");
+                opp->ties += 1;
+                break;
+            case SRV_LOSS:
+                irc_msg(dst, "You win!");
+                opp->wins += 1;
+                break;
+            }
+    
+            return 0;
         }
-
-        asprintf(&buf, "res");
-        irc_msg(dst, buf);
-        free(buf);
+  
+    }
+    else if (strcmp(msg, ".stats") == 0) {
+        send_all_stats(dst);
     }
 
     return 0;

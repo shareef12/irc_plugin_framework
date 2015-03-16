@@ -1,15 +1,15 @@
 CC=gcc
 CFLAGS=-c -Wall -D_GNU_SOURCE -ggdb
-LDFLAGS=-lirc -ldl
-TARGET_SOURCES=bot.c
+LDFLAGS=-ldl -lssl -lcrypto
+TARGET_SOURCES=framework.c bot.c
 TARGET_OBJECTS=$(TARGET_SOURCES:.c=.o)
-EXECUTABLE=cbot
+EXECUTABLE=mainframe
 API_DIR=api
 PLUGIN_DIR=plugins
 
-.PHONY: all api plugins target
+.PHONY: all target api plugins
 
-all: api plugins target
+all: target api plugins
 
 api:
 	$(MAKE) -C $(API_DIR)
