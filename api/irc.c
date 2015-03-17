@@ -18,7 +18,12 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 
-static struct list_head bots;
+/**
+ * TODO: Redesign nick storage
+ * TODO: Implement bot_get_nicks
+ */
+
+struct list_head bots;
 
 typedef struct plugin {
     struct list_head list;
@@ -305,9 +310,6 @@ static int irc_connect(bot_t *bot, char *server, char *port, uint8_t ssl,
     irc_send(bot, buf, strlen(buf), 0);
     free(buf);
 
-    irc_send(bot, "JOIN #test\n", 11, 0);
-    irc_recv_flush_to_fp(bot, stdout);
-
     return 0;
 }
 
@@ -382,7 +384,7 @@ static int plugin_unload(plugin_t *plugin)
 }
 
 
-int bot_create(char *name, char *server, char *port, uint8_t ssl,
+bot_t * bot_create(char *name, char *server, char *port, uint8_t ssl,
                char *user, char *nick, char *pass, char *maintainer)
 {
     bot_t *bot;
@@ -392,7 +394,7 @@ int bot_create(char *name, char *server, char *port, uint8_t ssl,
     err = irc_connect(bot, server, port, ssl, user, name, nick, pass);
     if (err < 0) {
         free(bot);
-        return err;
+        return NULL;
     }
 
     bot->name   = strdup(name);
@@ -409,7 +411,7 @@ int bot_create(char *name, char *server, char *port, uint8_t ssl,
 
     list_add_tail(&bot->list, &bots);
 
-    return 0;
+    return bot;
 }
 
 
@@ -593,24 +595,28 @@ void list_bot_names()
 }
 
 
+char * bot_recv_all()
+{
+    bot_t *bot;
+
+    bot = get_bot_by_thread();
+    if (bot == NULL)
+        return NULL;
+
+    return irc_recv_all(bot);
+}
+
+
 ssize_t bot_send(char *buf, size_t len, int flags)
 {
     bot_t *bot;
     ssize_t bytesSent;
     
     bot = get_bot_by_thread();
-    if (bot == NULL) {
+    if (bot == NULL)
         return -1;
-    }
     
-    if (bot->sslHandle == NULL) {
-        bytesSent = send(bot->socket, buf, len, flags);
-    }
-    else {
-        bytesSent = SSL_write(bot->sslHandle, buf, len);
-    }
-
-    return bytesSent;
+    return irc_send(bot, buf, len, flags);
 }
 
 

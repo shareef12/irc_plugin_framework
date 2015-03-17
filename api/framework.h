@@ -7,6 +7,31 @@
 #include <pthread.h>
 #include <openssl/ssl.h>
 
+typedef struct bot {
+    struct list_head list;
+    
+    char *name;
+    char *server;
+    char *port;
+    uint8_t ssl;
+    
+    char *user;
+    char *nick;
+    char *pass;
+    char *maintainer;
+    
+    pthread_t thread;
+    int socket;
+    SSL *sslHandle;
+    SSL_CTX *sslContext;
+    
+    unsigned int nChannels;
+    struct list_head channels;
+    struct list_head plugins;
+} bot_t;
+
+extern struct list_head bots;
+
 /**
  * bot_create - Create a bot with no connections or plugins
  * @name:   The generic name for the bot (Not IRC nick)
@@ -18,7 +43,7 @@
  * @pass:   Password for the bot's nick (used in IDENTIFY with nickserv)
  * @maintainer: Nick of the bot maintainer
  */ 
-int bot_create(char *name, char *server, char *port, uint8_t ssl,
+bot_t * bot_create(char *name, char *server, char *port, uint8_t ssl,
                char *user, char *nick, char *pass, char *maintainer);
 
 /**
@@ -54,5 +79,11 @@ int bot_part_channel(char *bot_name, char *channel, char *reason);
 int bot_change_nick(char *bot_name, char *nick);
 
 void list_bot_names();
+
+// Must be called from a bot running in an independent thread
+ssize_t bot_send(char *buf, size_t len, int flags);
+
+// Must be called from a bot running in an independent thread
+char * bot_recv_all();
 
 #endif
