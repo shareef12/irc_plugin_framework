@@ -1,7 +1,7 @@
 CC=gcc
 CFLAGS=-c -Wall -D_GNU_SOURCE -ggdb
-LDFLAGS=-ldl -lssl -lcrypto
-TARGET_SOURCES=framework.c bot.c
+LDFLAGS=-lirc -pthread
+TARGET_SOURCES=framework.c
 TARGET_OBJECTS=$(TARGET_SOURCES:.c=.o)
 EXECUTABLE=mainframe
 API_DIR=api

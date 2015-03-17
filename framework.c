@@ -1,9 +1,7 @@
-#include "framework.h"
-#include "bot.h"
+#include "api/framework.h"
 
+#include <pthread.h>
 #include <signal.h>
-
-struct list_head bots;
 
 
 void term_handler(int signum)
@@ -11,8 +9,8 @@ void term_handler(int signum)
     bot_t *bot, *n;
 
     list_for_each_entry_safe(bot, n, &bots, list) {
-        list_del(&bot->list);
-        bot_destroy(bot, "Terminated by Maintainer");
+        // TODO: Wait for the thread to join
+        bot_destroy(bot->name, "Framework terminated by local admin");
     }
     exit(0);
 }
@@ -72,9 +70,9 @@ void handle_admin_msg(char *msg)
         if (name != NULL) free(name);
     }
 }
+*/
 
-
-void run_forever()
+void * run_forever(void *vd)
 {
     char *buf, *cmd, *src, *dst, *msg;
     int items;
@@ -88,11 +86,13 @@ void run_forever()
         dst = NULL;
         msg = NULL;
 
-        irc_recv_all(&buf, &n);
+        buf = bot_recv_all();
+        if (buf == NULL)
+            continue;
 
         // Respond to PING first
         if (strncmp(buf, "PING :", 6) == 0) {
-            irc_pong(buf);
+            //irc_pong(buf);
             free(buf);
             continue;
         }
@@ -110,21 +110,26 @@ void run_forever()
             continue;
         }
 
+        printf("%s\n", buf);
+
+        /*
         // Interpret the PRIVMSG
         if (strcmp(src, MAINTAINER) == 0 &&
             strcmp(dst, NICK) == 0 &&
             msg[0] == '!')
         {
-            handle_admin_msg(msg);
+            //handle_admin_msg(msg);
         }
+        
         else if (list_empty((struct list_head *)plugins)) {
-            plugins->handle_func(src,dst,msg);
+            //plugins->handle_func(src,dst,msg);
         }
         else {
             list_for_each(pos, (struct list_head *)plugins) {
                 ((plugin_t *)pos)->handle_func(src, dst, msg);
             }
         }
+        */
 
         fflush(stdout);
         free(cmd);
@@ -134,10 +139,12 @@ void run_forever()
         free(buf);
     }
 }
-*/
+
 
 int main(int argc, char *argv[])
 {
+    bot_t *bot;
+
     // Initial globals and register sighandlers
     INIT_LIST_HEAD(&bots);
 
@@ -145,13 +152,13 @@ int main(int argc, char *argv[])
     signal(SIGTERM, term_handler);
 
     // Initial connection actions
-    bot_t *bot = bot_create("shareef12", "beitshlomo.com", "6697", 1, "shareef12", "cbot", "holaa", "shareef12");
-    list_add_tail(&bot->list, &bots);
+    bot = bot_create("testbot", "beitshlomo.com", "6697", 1, "shareef12", "cbot", "password", "shareef12");
+    bot_join_channel(bot->name, "#test");
 
     // Begin the main run loop
-    //run_forever();
+    pthread_create(&bot->thread, NULL, run_forever, NULL);
+    pthread_join(bot->thread, NULL);
 
-    bot_destroy(bot, "Finished execution"); 
-
+    term_handler(0);
     return 0;
 }

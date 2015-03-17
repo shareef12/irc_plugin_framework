@@ -6,7 +6,7 @@ int init(void) -> Conduct any plugin-specific actions on load
 int handle(char *src, char *dst, char *msg) -> Actions to take on receipt of a PRIVMSG
 int fini(void) -> Conduct any plugin-specific actions on unload
 
-A basic irc API is provided. Plugins should include api/irc.h to access these functions.
+A basic irc API is provided. Plugins should include api/plugin.h to access these functions.
 
 Dependencies
 ============
