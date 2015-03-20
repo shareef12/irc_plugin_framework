@@ -18,6 +18,8 @@
 #include <openssl/ssl.h>
 #include <openssl/err.h>
 
+//#define printf(format, ...) fprintf(stdout, "\r" format "> ", ##__VA_ARGS__)
+
 /**
  * TODO: Redesign nick storage
  * TODO: Implement bot_get_nicks
@@ -67,19 +69,6 @@ typedef struct bot {
     struct list_head channels;
     struct list_head plugins;
 } bot_t;
-
-
-static bot_t * get_bot_by_name(char *bot_name)
-{
-    bot_t *bot;
-
-    list_for_each_entry(bot, &bots, list) {
-        if (strcmp(bot->name, bot_name) == 0)
-            return bot;
-    }
-
-    return NULL;
-}
 
 
 static bot_t * get_bot_by_thread()
