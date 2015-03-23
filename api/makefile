@@ -1,6 +1,6 @@
 CC=gcc
 CFLAGS=-c -Wall -D_GNU_SOURCE -ggdb -fpic
-LDFLAGS=-lcrypto -lssl -shared
+LDFLAGS=-shared
 LIB_SOURCES=irc.c
 LIB_OBJECTS=$(LIB_SOURCES:.c=.o)
 LIB=libirc.so

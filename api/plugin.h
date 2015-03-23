@@ -3,6 +3,8 @@
 
 #include <stdarg.h>
 
+//#define printf(format, ...) fprintf(stdout, "\r" format "> ", ##__VA_ARGS__)
+
 /**
  * irc_send - Low level sending function. Plugins should prefer higher level
  *            functions listed below.

@@ -1,6 +1,6 @@
 CC=gcc
 CFLAGS=-c -Wall -D_GNU_SOURCE -ggdb
-LDFLAGS=-lirc -pthread
+LDFLAGS=-lirc -lcrypto -lssl -ldl -pthread
 TARGET_SOURCES=framework.c
 TARGET_OBJECTS=$(TARGET_SOURCES:.c=.o)
 EXECUTABLE=mainframe
